@@ -143,12 +143,21 @@ pub fn emulate8080Op(count: u32) !void {
         0x03 => { //INX B     BC <- BC+1
             cpu.reg._16.BC += 1;
         },
+        0x04 => { //INR B   B <- B+1
+            cpu.reg._8.B +%= 1;
+            updateFlags(cpu.reg._8.B);
+        },
         0x05 => { //DCR B   B <- B-1
             cpu.reg._8.B -%= 1;
             updateFlags(cpu.reg._8.B);
         },
         0x06 => { //MVI B, D8
             cpu.reg._8.B = fetch8();
+        },
+        0x07 => { //RLC     A = A << 1; bit 0 = prev bit 7; CY = prev bit 7
+            var lastBit: u8 = cpu.reg._8.A & (1 << 7);
+            cpu.reg.flags.CY = lastBit > 0;
+            cpu.reg._8.A = (cpu.reg._8.A << 1) | (lastBit >> 7);
         },
         0x0a => { // LDAX B    A <- (BC)
             cpu.reg._8.A = memory[cpu.reg._16.BC];
@@ -198,14 +207,22 @@ pub fn emulate8080Op(count: u32) !void {
         0x1e => { //MVI E,D8
             cpu.reg._8.E = fetch8();
         },
+        0x1f => { //RAR     A = A >> 1; bit 7 = prev bit 7; CY = prev bit 0
+            var firstBit = cpu.reg._8.A & 1;
+            var lastBit: u8 = cpu.reg._8.A & (1 << 7);
+            cpu.reg._8.A = cpu.reg._8.A >> 1 | lastBit;
+            cpu.reg.flags.CY = firstBit == 1;
+        },
         0x21 => { //LXI   HL,word
             cpu.reg._16.HL = fetch16();
         },
+        0x22 => { //SHLD adr    	(adr) <-L; (adr+1)<-H
+            var adr = fetch16();
+            memory[adr] = cpu.reg._8.L;
+            memory[adr+1] = cpu.reg._8.H;
+        },
         0x23 => { //INX H   HL <- HL + 1
             cpu.reg._16.HL += 1;
-        },
-        0x2e => { //MVI L, D8
-            cpu.reg._8.L = fetch8();
         },
         0x25 => { // DCR H  H <- H-1
             cpu.reg._8.H -%= 1;
@@ -219,9 +236,20 @@ pub fn emulate8080Op(count: u32) !void {
             cpu.reg._16.HL = @truncate(u16, result);
             cpu.reg.flags.CY = result > 0xffff;
         },
+        0x2a => { //LHLD adr    L <- (adr); H<-(adr+1)
+            var adr = fetch16();
+            cpu.reg._8.L = memory[adr];
+            cpu.reg._8.H = memory[adr+1];
+        },
+        0x2b => { //DCX H   HL = HL-1
+            cpu.reg._16.HL -%= 1;
+        },
         0x2d => { // DCR L  L <- L-1
             cpu.reg._8.L -%= 1;
             updateFlags(cpu.reg._8.L);
+        },
+        0x2e => { //MVI L, D8
+            cpu.reg._8.L = fetch8();
         },
         0x2f => { //CMA (not)   A <- !A
             cpu.reg._8.A = ~cpu.reg._8.A;
@@ -231,6 +259,10 @@ pub fn emulate8080Op(count: u32) !void {
         },
         0x32 => { //STA adr     (adr) <- A
             memory[fetch16()] = cpu.reg._8.A;
+        },
+        0x34 => { //INR M	1	Z, S, P, AC	(HL) <- (HL)+1
+            memory[cpu.reg._16.HL] += 1; 
+            updateFlags(memory[cpu.reg._16.HL]);
         },
         0x35 => { //DCR M   (HL) <- (HL)-1
             memory[cpu.reg._16.HL] = memory[cpu.reg._16.HL] -% 1;
@@ -245,12 +277,26 @@ pub fn emulate8080Op(count: u32) !void {
         0x3a => { //LDA adr     A <- (adr)
             cpu.reg._8.A = memory[fetch16()];
         },
+        0x3c => { //INR A       A <- A+1
+            cpu.reg._8.A +%= 1;
+            updateFlags(cpu.reg._8.A);
+            // FIXME AC
+        },
         0x3d => { //DCR A   	A <- A-1
             cpu.reg._8.A -%= 1;
             updateFlags(cpu.reg._8.A);
         },
         0x3e => { //MVI A,D8
             cpu.reg._8.A = fetch8();
+        },
+        0x46 => { //MOV B,M     B <- (HL)
+            cpu.reg._8.B = memory[cpu.reg._16.HL];
+        },
+        0x47 => { //MOV B,A     B <- A
+            cpu.reg._8.B = cpu.reg._8.A;
+        },
+        0x4e => { //MOV C,M     C <- (HL)
+            cpu.reg._8.C = memory[cpu.reg._16.HL];
         },
         0x4f => { //MOV C,A     C <- A
             cpu.reg._8.C = cpu.reg._8.A;
@@ -270,17 +316,35 @@ pub fn emulate8080Op(count: u32) !void {
         0x5f => { //MOV E,A     E <- A
             cpu.reg._8.E = cpu.reg._8.A;
         },
+        0x61 => { //MOV H,C     H <- C
+            cpu.reg._8.H = cpu.reg._8.C;
+        },
         0x66 => { // MOV H,M    H <- (HL)
             cpu.reg._8.H = memory[cpu.reg._16.HL];
         },
         0x67 => { //MOV H,A     H <- A
             cpu.reg._8.H = cpu.reg._8.A;
         },
+        0x68 => { //MOV L,B     L <- B
+            cpu.reg._8.L = cpu.reg._8.B;
+        },
+        0x69 => { //MOV L,C 	L <- C
+            cpu.reg._8.L = cpu.reg._8.C;
+        },
         0x6f => { // MOV L,A    L <- A
             cpu.reg._8.L = cpu.reg._8.A;
         },
+        0x70 => { //MOV M,B     (HL) <- B
+            memory[cpu.reg._16.HL] = cpu.reg._8.B;
+        },
         0x77 => { // MOV M,A    (HL) <- A
             memory[cpu.reg._16.HL] = cpu.reg._8.A;
+        },
+        0x78 => { // MOV A,B    A <- B
+            cpu.reg._8.A = cpu.reg._8.B;
+        },
+        0x79 => { // MOV A,C    A <- C
+            cpu.reg._8.A = cpu.reg._8.C;
         },
         0x7a => { // MOV A,D    A <- D
             cpu.reg._8.A = cpu.reg._8.D;
@@ -308,14 +372,25 @@ pub fn emulate8080Op(count: u32) !void {
             cpu.reg._8.A = @truncate(u8, result);
         },
         0xa7 => { //ANA A   A <- A & A
-            // try cpu.print();
             cpu.reg._8.A &= cpu.reg._8.A;
             updateFlagsResetCarry(cpu.reg._8.A);
-
-            // try exit(opCode);
+        },
+        0xa8 => { //XRA B   A <- A ^ B
+            cpu.reg._8.A ^= cpu.reg._8.B;
+            updateFlagsResetCarry(cpu.reg._8.A);
+            // FIXME AC
         },
         0xaf => { //XRA A   	A <- A ^ A
             cpu.reg._8.A ^= cpu.reg._8.A;
+            updateFlagsResetCarry(cpu.reg._8.A);
+        },
+        0xb0 => { //ORA B	A <- A | B
+            cpu.reg._8.A = cpu.reg._8.A | cpu.reg._8.B;
+            updateFlagsResetCarry(cpu.reg._8.A);
+            // FIXME AC
+        },
+        0xb4 => { //ORA H   A <- A | H
+            cpu.reg._8.A = cpu.reg._8.A | cpu.reg._8.H;
             updateFlagsResetCarry(cpu.reg._8.A);
         },
         0xb6 => { // ORA M      A <- A | (HL)
@@ -323,6 +398,11 @@ pub fn emulate8080Op(count: u32) !void {
             // FIXME: AC
             updateFlags(result);
             cpu.reg._8.A = @truncate(u8, result);
+        },
+        0xc0 => { //RNZ     	if NZ, RET
+            if (!cpu.reg.flags.Z) {
+                ret();
+            }
         },
         0xc1 => { //POP B   C <- (sp); B <- (sp+1); sp <- sp+2
             cpu.reg._8.B = memory[cpu.reg._16.SP + 1];
@@ -337,6 +417,13 @@ pub fn emulate8080Op(count: u32) !void {
         },
         0xc3 => { //JMP    ${x}{x}
             cpu.reg._16.PC = fetch16();
+        },
+        0xc4 => { //CNZ adr    if NZ, CALL adr
+            if (!cpu.reg.flags.Z) {
+                call();
+            } else {
+                _ = fetch16();
+            }
         },
         0xc5 => { //PUSH B    	(sp-2)<-C; (sp-1)<-B; sp <- sp - 2
             memory[cpu.reg._16.SP - 1] = cpu.reg._8.B;
@@ -353,6 +440,9 @@ pub fn emulate8080Op(count: u32) !void {
                 ret();
             }
         },
+        0xc9 => { //RET
+            ret();
+        },
         0xca => { // JZ adr     if Z, PC <- adr
             var address = fetch16();
             if (cpu.reg.flags.Z) {
@@ -360,15 +450,12 @@ pub fn emulate8080Op(count: u32) !void {
             }
         },
         0xcd => { // CALL adr     (SP-1)<-PC.hi;(SP-2)<-PC.lo;SP<-SP-2;PC=adr
-            var nextPC = cpu.reg._16.PC + 2;
-            memory[cpu.reg._16.SP - 1] = @truncate(u8, nextPC >> 8);
-            memory[cpu.reg._16.SP - 2] = @truncate(u8, nextPC);
-            cpu.reg._16.SP = cpu.reg._16.SP - 2;
-            cpu.reg._16.PC = fetch16();
-            // try stdout.print("CALL nextPC={x}, newAddress={x}\n", .{ nextPC, cpu.reg._16.PC });
+            call();
         },
-        0xc9 => { //RET
-            ret();
+        0xd0 => { //RNC     if NCY, RET
+            if (!cpu.reg.flags.CY) {
+                ret();
+            }
         },
         0xd8 => { //RC      if CY, RET
             if (cpu.reg.flags.CY) {
@@ -388,6 +475,10 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.E;
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
         },
+        0xd6 => { //SUI D8      A <- A - data
+            cpu.reg._8.A -%= fetch8();
+            updateFlagsResetCarry(cpu.reg._8.A);
+        },
         0xda => { //JC adr      if CY, PC<-adr
             var adr = fetch16();
             if (cpu.reg.flags.CY) {
@@ -402,6 +493,15 @@ pub fn emulate8080Op(count: u32) !void {
             cpu.reg._8.L = memory[cpu.reg._16.SP];
             cpu.reg._16.SP = cpu.reg._16.SP + 2;
         },
+        0xe3 => { // XTHL   L <-> (SP); H <-> (SP+1)
+            var tmpL = cpu.reg._8.L;
+            cpu.reg._8.L = memory[cpu.reg._16.SP];
+            memory[cpu.reg._16.SP] = tmpL;
+
+            var tmpH = cpu.reg._8.H;
+            cpu.reg._8.H = memory[cpu.reg._16.SP+1];
+            memory[cpu.reg._16.SP+1] = tmpH;
+        },
         0xe5 => { //PUSH H     	(sp-2)<-L; (sp-1)<-H; sp <- sp - 2
             memory[cpu.reg._16.SP - 1] = cpu.reg._8.H;
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.L;
@@ -410,6 +510,9 @@ pub fn emulate8080Op(count: u32) !void {
         0xe6 => { //ANI D8 	A <- A & data
             cpu.reg._8.A = cpu.reg._8.A & fetch8();
             updateFlagsResetCarry(cpu.reg._8.A);
+        },
+        0xe9 => { //PCHL    PC.hi <- H; PC.lo <- L
+            cpu.reg._16.PC = toU16(cpu.reg._8.H, cpu.reg._8.L);
         },
         0xeb => { //XCHG    H <-> D; L <-> E
             var tmp = cpu.reg._8.D;
@@ -429,6 +532,17 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP - 1] = cpu.reg._8.A;
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.F;
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
+        },
+        0xf6 => { //ORI D8      A <- A | data
+            cpu.reg._8.A |= fetch8();
+            updateFlagsResetCarry(cpu.reg._8.A);
+            // FIXME AC
+        },
+        0xfa => { // JM adr     	if M, PC <- adr
+            var adr = fetch16();
+            if(cpu.reg.flags.S) {
+                cpu.reg._16.PC = adr;
+            }
         },
         0xfb => { //EI  enable interrupts
             cpu.interruptEnabled = true;
@@ -450,6 +564,15 @@ pub fn emulate8080Op(count: u32) !void {
     // if(count == 9999999) {
     //     try exit(opCode);
     // }
+}
+
+pub fn call() void {
+    var nextPC = cpu.reg._16.PC + 2;
+    memory[cpu.reg._16.SP - 1] = @truncate(u8, nextPC >> 8);
+    memory[cpu.reg._16.SP - 2] = @truncate(u8, nextPC);
+    cpu.reg._16.SP = cpu.reg._16.SP - 2;
+    cpu.reg._16.PC = fetch16();
+    // try stdout.print("CALL nextPC={x}, newAddress={x}\n", .{ nextPC, cpu.reg._16.PC });
 }
 
 pub fn ret() void {

@@ -64,26 +64,7 @@ pub const Flags = packed struct {
     S: bool,
 };
 
-pub fn Register(comptime E: type, comptime T: type) type {
-    return extern struct {
-        const len = @typeInfo(E).Enum.fields.len;
-        data: [len]T,
-
-        pub fn get(self: @This(), tag: E) T {
-            return self.data[@enumToInt(tag)];
-        }
-
-        pub fn set(self: *@This(), tag: E, value: T) void {
-            self.data[@enumToInt(tag)] = value;
-        }
-
-        pub fn copy(self: *@This(), dst: E, src: E) void {
-            self.set(dst, self.get(src));
-        }
-    };
-}
-
-test "a" {
+test "arrangement" {
     const A = packed struct {
         CY: bool,
         B: bool,
