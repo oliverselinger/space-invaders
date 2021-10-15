@@ -50,12 +50,6 @@ pub fn main() !void {
     //************* END INIT SDL *********************
     //************************************************
 
-    // var pc: u16 = 0;
-    // const file_size = try file.getEndPos();
-    // while (pc < file_size) {
-    //     pc += try disassemble8080(file_memory, pc);
-    // }
-
     var lastInterrupt: i64 = 0;
     var sixtyHz: i64 = 16; // 60 Hz = 1 interrupt per 16.66667 ms
 
@@ -70,8 +64,8 @@ pub fn main() !void {
             lastInterrupt = currentTime;
 
             spaceInvaders_vblank(screentex);
+
             _ = sdl.SDL_RenderClear(renderer);
-            const flip = sdl.SDL_FLIP_HORIZONTAL | sdl.SDL_FLIP_VERTICAL;
             _ = sdl.SDL_RenderCopy(renderer, screentex, 0, 0);
             sdl.SDL_RenderPresent(renderer);
         }
@@ -129,8 +123,6 @@ pub fn generateInterrupt(number: u8) void {
     memory[cpu.reg._16.SP - 1] = @truncate(u8, cpu.reg._16.PC >> 8);
     memory[cpu.reg._16.SP - 2] = @truncate(u8, cpu.reg._16.PC);
     cpu.reg._16.SP = cpu.reg._16.SP - 2;
-
-    //Push(state, (state->pc & 0xFF00) >> 8, (state->pc & 0xff));
 
     //Set the PC to the low memory vector.
     //This is identical to an "RST interrupt_num" instruction.
@@ -373,7 +365,7 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP - 2] = @truncate(u8, nextPC);
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
             cpu.reg._16.PC = fetch16();
-            try stdout.print("CALL nextPC={x}, newAddress={x}\n", .{ nextPC, cpu.reg._16.PC });
+            // try stdout.print("CALL nextPC={x}, newAddress={x}\n", .{ nextPC, cpu.reg._16.PC });
         },
         0xc9 => { //RET
             ret();
@@ -462,7 +454,7 @@ pub fn emulate8080Op(count: u32) !void {
 
 pub fn ret() void {
     cpu.reg._16.PC = @as(u16, memory[cpu.reg._16.SP]) | (@as(u16, memory[cpu.reg._16.SP + 1]) << 8);
-    std.debug.print("RET adr={x}\n", .{cpu.reg._16.PC});
+    // std.debug.print("RET adr={x}\n", .{cpu.reg._16.PC});
     cpu.reg._16.SP += 2;
 }
 
@@ -557,148 +549,6 @@ pub fn fetch16() u16 {
     var bytes = toU16(memory[cpu.reg._16.PC + 1], memory[cpu.reg._16.PC]);
     cpu.reg._16.PC += 2;
     return bytes;
-}
-
-pub fn disassemble8080(memory: []u8, pc: u16) !u16 {
-    var opBytes: u8 = 1;
-    const opCode = memory[pc];
-
-    try stdout.print("{x:0>4} ", .{pc});
-
-    switch (opCode) {
-        0x00 => try stdout.print("NOP", .{}),
-        0x01 => {
-            try stdout.print("LXI    BC,#${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0x02 => try stdout.print("STAX   B", .{}),
-        0x03 => try stdout.print("INX    B", .{}),
-        0x04 => try stdout.print("INR    B", .{}),
-        0x05 => try stdout.print("DCR    B", .{}),
-        0x06 => {
-            try stdout.print("MVI    B,#${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0x07 => try stdout.print("RLC", .{}),
-        0x08 => try stdout.print("NOP", .{}),
-        0x09 => try stdout.print("DAD B", .{}),
-        0x0d => try stdout.print("DCR C", .{}),
-        0x0e => {
-            try stdout.print("MVI C,#${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0x0f => try stdout.print("RRC", .{}),
-        0x11 => {
-            try stdout.print("LXI D,#${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0x13 => try stdout.print("INX D", .{}),
-        0x19 => try stdout.print("DAD D", .{}),
-        0x1a => try stdout.print("LDAX D", .{}),
-        0x21 => {
-            try stdout.print("LXI H,#${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0x23 => try stdout.print("INX H", .{}),
-        0x26 => {
-            try stdout.print("MVI H,#${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0x27 => try stdout.print("DAA", .{}),
-        0x29 => try stdout.print("DAD H", .{}),
-        0x31 => {
-            try stdout.print("LXI SP,#${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0x32 => {
-            try stdout.print("STA adr #${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0x35 => try stdout.print("DCR    M", .{}),
-        0x36 => {
-            try stdout.print("MVI M,#${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0x3a => {
-            try stdout.print("LDA adr #${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0x3e => {
-            try stdout.print("MVI    A,#${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0x56 => try stdout.print("MOV D,M", .{}),
-        0x5e => try stdout.print("MOV E,M", .{}),
-        0x66 => try stdout.print("MOV H,M", .{}),
-        0x6f => try stdout.print("MOV L,A", .{}),
-        0x77 => try stdout.print("MOV M,A", .{}),
-        0x7a => try stdout.print("MOV A,D", .{}),
-        0x7b => try stdout.print("MOV A,E", .{}),
-        0x7c => try stdout.print("MOV A,H", .{}),
-        0x7e => try stdout.print("MOV A,M", .{}),
-        0xa7 => try stdout.print("ANA A", .{}),
-        0xaf => try stdout.print("XRA A", .{}),
-        0xc1 => try stdout.print("POP B", .{}),
-        0xc2 => {
-            try stdout.print("JNZ adr #${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0xc3 => {
-            try stdout.print("JMP    ${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0xc5 => try stdout.print("PUSH B", .{}),
-        0xc6 => {
-            try stdout.print("ADI #${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0xc9 => try stdout.print("RET", .{}),
-        0xca => {
-            try stdout.print("JZ    ${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0xcd => {
-            try stdout.print("CALL adr #${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0xd1 => try stdout.print("POP D", .{}),
-        0xd3 => {
-            try stdout.print("OUT #${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0xd5 => try stdout.print("PUSH D", .{}),
-        0xda => {
-            try stdout.print("JC ${x}{x}", .{ memory[pc + 2], memory[pc + 1] });
-            opBytes = 3;
-        },
-        0xdb => {
-            try stdout.print("IN #${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0xe1 => try stdout.print("POP H", .{}),
-        0xe5 => try stdout.print("PUSH H", .{}),
-        0xe6 => {
-            try stdout.print("ANI #${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        0xeb => try stdout.print("XCHG", .{}),
-        0xf1 => try stdout.print("POP PSW", .{}),
-        0xf5 => try stdout.print("PUSH PSW", .{}),
-        0xfb => try stdout.print("EI", .{}),
-        0xfe => {
-            try stdout.print("CPI #${x}", .{memory[pc + 1]});
-            opBytes = 2;
-        },
-        else => {
-            try stdout.print("Unknown Opcode {x}\n", .{opCode});
-            try cpu.print();
-            @panic("ouch");
-        },
-    }
-
-    try stdout.print("\n", .{});
-
-    return opBytes;
 }
 
 pub fn toU16(highByte: u8, lowByte: u8) u16 {
