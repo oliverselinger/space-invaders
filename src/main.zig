@@ -9,7 +9,7 @@ const sdl = @cImport({
 
 var cpu: cp.Cpu = undefined;
 
-var memory: []u8 = undefined;
+var memory: [0x4000]u8 = undefined;
 
 var screen_buf: [224 * 256]u32 = undefined;
 
@@ -17,13 +17,13 @@ pub fn main() !void {
     const file = try std.fs.cwd().openFile("invaders", .{});
     defer file.close();
 
-    const memorySize = 0x4000;
+    // const memorySize = 0x4000;
 
-    const allocator = std.heap.page_allocator;
-    memory = try allocator.alloc(u8, memorySize);
-    defer allocator.free(memory);
+    // const allocator = std.heap.page_allocator;
+    // memory = try allocator.alloc(u8, memorySize);
+    // defer allocator.free(memory);
 
-    const n = try file.readAll(memory);
+    const n = try file.readAll(memory[0..]);
 
     //************************************************
     //************* INIT SDL *************************
@@ -53,6 +53,7 @@ pub fn main() !void {
     var lastInterrupt: i64 = 0;
     var sixtyHz: i64 = 16; // 60 Hz = 1 interrupt per 16.66667 ms
 
+    var toggle: bool = false;
     var count: u32 = 0;
     while (true) {
         try emulate8080Op(count);
@@ -60,7 +61,13 @@ pub fn main() !void {
 
         var currentTime = time.milliTimestamp();
         if (cpu.interruptEnabled and (currentTime - lastInterrupt) > sixtyHz) { // enough time elapsed
+            if(toggle) {
             generateInterrupt(2); //interrupt 2
+            toggle = !toggle;
+            } else {
+            generateInterrupt(1); //interrupt 2
+            toggle = !toggle;
+            }
             lastInterrupt = currentTime;
 
             spaceInvaders_vblank(screentex);
@@ -131,8 +138,15 @@ pub fn generateInterrupt(number: u8) void {
 
 pub fn emulate8080Op(count: u32) !void {
     const opCode = fetch8();
-    // try stdout.print("{x:0>4} {x}", .{ cpu.reg._16.PC - 1, opCode });
-    // try stdout.print("\trun={d}\n", .{count});
+    // if(count > 21_350_000) {
+    //     try stdout.print("{x:0>4} {x}", .{ cpu.reg._16.PC - 1, opCode });
+    //     try stdout.print("\tcount={d}\n", .{ count });
+    // }
+
+     if(cpu.reg._16.PC == 0x01f2) {
+            try exit(opCode);
+        
+        }
 
     switch (opCode) {
         0x00 => { //NOP
@@ -141,20 +155,20 @@ pub fn emulate8080Op(count: u32) !void {
             cpu.reg._16.BC = fetch16();
         },
         0x03 => { //INX B     BC <- BC+1
-            cpu.reg._16.BC += 1;
+            cpu.reg._16.BC +%= 1;
         },
-        0x04 => { //INR B   B <- B+1
+        0x04 => { //INR B       Z, S, P, AC         B <- B+1
             cpu.reg._8.B +%= 1;
-            updateFlags(cpu.reg._8.B);
+            updateZeroSignParityFlag(cpu.reg._8.B);
         },
-        0x05 => { //DCR B   B <- B-1
+        0x05 => { //DCR B       Z, S, P, AC         B <- B-1
             cpu.reg._8.B -%= 1;
-            updateFlags(cpu.reg._8.B);
+            updateZeroSignParityFlag(cpu.reg._8.B);
         },
         0x06 => { //MVI B, D8
             cpu.reg._8.B = fetch8();
         },
-        0x07 => { //RLC     A = A << 1; bit 0 = prev bit 7; CY = prev bit 7
+        0x07 => { //RLC   CY        A = A << 1; bit 0 = prev bit 7; CY = prev bit 7
             var lastBit: u8 = cpu.reg._8.A & (1 << 7);
             cpu.reg.flags.CY = lastBit > 0;
             cpu.reg._8.A = (cpu.reg._8.A << 1) | (lastBit >> 7);
@@ -162,19 +176,17 @@ pub fn emulate8080Op(count: u32) !void {
         0x0a => { // LDAX B    A <- (BC)
             cpu.reg._8.A = memory[cpu.reg._16.BC];
         },
-        0x0d => { // DCR C  C <-C-1
+        0x0d => { // DCR C      Z, S, P, AC         C <-C-1
             cpu.reg._8.C -%= 1;
-            updateFlags(cpu.reg._8.C);
+            updateZeroSignParityFlag(cpu.reg._8.C);
         },
-        0x09 => { //DAD B   HL = HL + BC
-            var result = @as(u32, cpu.reg._16.HL) + @as(u32, cpu.reg._16.BC);
-            cpu.reg._16.HL = @truncate(u16, result);
-            cpu.reg.flags.CY = result > 0xffff;
+        0x09 => { //DAD B   CY       HL = HL + BC
+            cpu.reg._16.HL = add16(cpu.reg._16.HL, cpu.reg._16.BC);
         },
         0x0e => { //MVI C,D8
             cpu.reg._8.C = fetch8();
         },
-        0x0f => { //RRC 	A = A >> 1; bit 7 = prev bit 0; CY = prev bit 0
+        0x0f => { //RRC     CY  	A = A >> 1; bit 7 = prev bit 0; CY = prev bit 0
             var prevBit = cpu.reg._8.A & 0x01;
             cpu.reg._8.A = (cpu.reg._8.A >> 1) | (prevBit << 7);
             cpu.reg.flags.CY = 1 == prevBit;
@@ -185,32 +197,29 @@ pub fn emulate8080Op(count: u32) !void {
         0x13 => { //INX D   DE <- DE + 1
             cpu.reg._16.DE += 1;
         },
-        0x15 => { //DCR D   D <- D-1
+        0x15 => { //DCR D   Z, S, P, AC     D <- D-1
             cpu.reg._8.D -%= 1;
-            updateFlags(cpu.reg._8.D);
+            updateZeroSignParityFlag(cpu.reg._8.D);
         },
         0x16 => { //MVI D, D8
             cpu.reg._8.D = fetch8();
         },
-        0x19 => { //DAD D   HL = HL + DE
-            var result = @as(u32, cpu.reg._16.HL) + @as(u32, cpu.reg._16.DE);
-            cpu.reg._16.HL = @truncate(u16, result);
-            cpu.reg.flags.CY = result > 0xffff;
+        0x19 => { //DAD D   CY      HL = HL + DE
+            cpu.reg._16.HL = add16(cpu.reg._16.HL, cpu.reg._16.DE);
         },
         0x1a => { //LDAX D 	A <- (DE)
             cpu.reg._8.A = memory[cpu.reg._16.DE];
         },
-        0x1d => { // DCR E      E <- E-1
+        0x1d => { // DCR E     Z, S, P, AC        E <- E-1
             cpu.reg._8.E -%= 1;
-            updateFlags(cpu.reg._8.E);
+            updateZeroSignParityFlag(cpu.reg._8.E);
         },
         0x1e => { //MVI E,D8
             cpu.reg._8.E = fetch8();
         },
-        0x1f => { //RAR     A = A >> 1; bit 7 = prev bit 7; CY = prev bit 0
+        0x1f => { //RAR     A = A >> 1; bit 7 = CY; CY = prev bit 0
             var firstBit = cpu.reg._8.A & 1;
-            var lastBit: u8 = cpu.reg._8.A & (1 << 7);
-            cpu.reg._8.A = cpu.reg._8.A >> 1 | lastBit;
+            cpu.reg._8.A = cpu.reg._8.A >> 1 | (@as(u8, @boolToInt(cpu.reg.flags.CY)) << 7);
             cpu.reg.flags.CY = firstBit == 1;
         },
         0x21 => { //LXI   HL,word
@@ -219,34 +228,32 @@ pub fn emulate8080Op(count: u32) !void {
         0x22 => { //SHLD adr    	(adr) <-L; (adr+1)<-H
             var adr = fetch16();
             memory[adr] = cpu.reg._8.L;
-            memory[adr+1] = cpu.reg._8.H;
+            memory[adr + 1] = cpu.reg._8.H;
         },
         0x23 => { //INX H   HL <- HL + 1
             cpu.reg._16.HL += 1;
         },
-        0x25 => { // DCR H  H <- H-1
+        0x25 => { // DCR H      Z, S, P, AC     H <- H-1
             cpu.reg._8.H -%= 1;
-            updateFlags(cpu.reg._8.H);
+            updateZeroSignParityFlag(cpu.reg._8.H);
         },
         0x26 => { //MVI H,D8
             cpu.reg._8.H = fetch8();
         },
-        0x29 => { //DAD H   	HL = HL + HI
-            var result = @as(u32, cpu.reg._16.HL) << 1;
-            cpu.reg._16.HL = @truncate(u16, result);
-            cpu.reg.flags.CY = result > 0xffff;
+        0x29 => { //DAD H   CY  	HL = HL + HI
+            cpu.reg._16.HL = add16(cpu.reg._16.HL, cpu.reg._16.HL);
         },
         0x2a => { //LHLD adr    L <- (adr); H<-(adr+1)
             var adr = fetch16();
             cpu.reg._8.L = memory[adr];
-            cpu.reg._8.H = memory[adr+1];
+            cpu.reg._8.H = memory[adr + 1];
         },
         0x2b => { //DCX H   HL = HL-1
             cpu.reg._16.HL -%= 1;
         },
-        0x2d => { // DCR L  L <- L-1
+        0x2d => { // DCR L  	Z, S, P, AC     L <- L-1
             cpu.reg._8.L -%= 1;
-            updateFlags(cpu.reg._8.L);
+            updateZeroSignParityFlag(cpu.reg._8.L);
         },
         0x2e => { //MVI L, D8
             cpu.reg._8.L = fetch8();
@@ -260,13 +267,13 @@ pub fn emulate8080Op(count: u32) !void {
         0x32 => { //STA adr     (adr) <- A
             memory[fetch16()] = cpu.reg._8.A;
         },
-        0x34 => { //INR M	1	Z, S, P, AC	(HL) <- (HL)+1
-            memory[cpu.reg._16.HL] += 1; 
-            updateFlags(memory[cpu.reg._16.HL]);
+        0x34 => { //INR M	Z, S, P, AC	    (HL) <- (HL)+1
+            memory[cpu.reg._16.HL] = memory[cpu.reg._16.HL] + 1;
+            updateZeroSignParityFlag(memory[cpu.reg._16.HL]);
         },
-        0x35 => { //DCR M   (HL) <- (HL)-1
+        0x35 => { //DCR M   Z, S, P, AC         (HL) <- (HL)-1
             memory[cpu.reg._16.HL] = memory[cpu.reg._16.HL] -% 1;
-            updateFlags(memory[cpu.reg._16.HL]);
+            updateZeroSignParityFlag(memory[cpu.reg._16.HL]);
         },
         0x36 => { //MVI M,D8    	(HL) <- byte 2
             memory[cpu.reg._16.HL] = fetch8();
@@ -277,14 +284,13 @@ pub fn emulate8080Op(count: u32) !void {
         0x3a => { //LDA adr     A <- (adr)
             cpu.reg._8.A = memory[fetch16()];
         },
-        0x3c => { //INR A       A <- A+1
+        0x3c => { //INR A    Z, S, P, AC        A <- A+1
             cpu.reg._8.A +%= 1;
-            updateFlags(cpu.reg._8.A);
-            // FIXME AC
+            updateZeroSignParityFlag(cpu.reg._8.A);
         },
-        0x3d => { //DCR A   	A <- A-1
+        0x3d => { //DCR A   Z, S, P, AC     	A <- A-1
             cpu.reg._8.A -%= 1;
-            updateFlags(cpu.reg._8.A);
+            updateZeroSignParityFlag(cpu.reg._8.A);
         },
         0x3e => { //MVI A,D8
             cpu.reg._8.A = fetch8();
@@ -361,43 +367,47 @@ pub fn emulate8080Op(count: u32) !void {
         0x7e => { // MOV A,M    A <- (HL)
             cpu.reg._8.A = memory[cpu.reg._16.HL];
         },
-        0x80 => { //ADD B   A <- A + B
-            var result: u16 = @as(u16, cpu.reg._8.A) +% @as(u16, cpu.reg._8.B);
-            updateFlags(result);
-            cpu.reg._8.A = @truncate(u8, result);
+        0x80 => { //ADD B       Z, S, P, CY, AC     A <- A + B
+            cpu.reg._8.A = add8(cpu.reg._8.A, cpu.reg._8.B);
+            updateZeroSignParityFlag(cpu.reg._8.A);
         },
         0x86 => { //ADD M    A <- A + (HL)
-            var result: u16 = @as(u16, cpu.reg._8.A) +% memory[cpu.reg._16.HL];
-            updateFlags(result);
-            cpu.reg._8.A = @truncate(u8, result);
+            cpu.reg._8.A = add8(cpu.reg._8.A, memory[cpu.reg._16.HL]);
+            updateZeroSignParityFlag(cpu.reg._8.A);
         },
-        0xa7 => { //ANA A   A <- A & A
-            cpu.reg._8.A &= cpu.reg._8.A;
-            updateFlagsResetCarry(cpu.reg._8.A);
+        0xa7 => { //ANA A   Z, S, P, CY, AC         A <- A & A
+            cpu.reg._8.A = cpu.reg._8.A & cpu.reg._8.A;
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
-        0xa8 => { //XRA B   A <- A ^ B
-            cpu.reg._8.A ^= cpu.reg._8.B;
-            updateFlagsResetCarry(cpu.reg._8.A);
-            // FIXME AC
+        0xa8 => { //XRA B   Z, S, P, CY, AC         A <- A ^ B
+            cpu.reg._8.A = cpu.reg._8.A ^ cpu.reg._8.B;
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
-        0xaf => { //XRA A   	A <- A ^ A
-            cpu.reg._8.A ^= cpu.reg._8.A;
-            updateFlagsResetCarry(cpu.reg._8.A);
+        0xaf => { //XRA A   Z, S, P, CY, AC     	A <- A ^ A
+            cpu.reg._8.A = cpu.reg._8.A ^ cpu.reg._8.A;
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
-        0xb0 => { //ORA B	A <- A | B
+        0xb0 => { //ORA B	Z, S, P, CY, AC         A <- A | B
             cpu.reg._8.A = cpu.reg._8.A | cpu.reg._8.B;
-            updateFlagsResetCarry(cpu.reg._8.A);
-            // FIXME AC
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
-        0xb4 => { //ORA H   A <- A | H
+        0xb4 => { //ORA H   Z, S, P, CY, AC         A <- A | H
             cpu.reg._8.A = cpu.reg._8.A | cpu.reg._8.H;
-            updateFlagsResetCarry(cpu.reg._8.A);
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
-        0xb6 => { // ORA M      A <- A | (HL)
-            var result = @as(u16, cpu.reg._8.A) | cpu.reg._16.HL;
-            // FIXME: AC
-            updateFlags(result);
-            cpu.reg._8.A = @truncate(u8, result);
+        0xb6 => { //ORA M   Z, S, P, CY, AC       A <- A | (HL)
+            cpu.reg._8.A = cpu.reg._8.A | memory[cpu.reg._16.HL];
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
+        },
+        0xb8 => { //CMP B	Z, S, P, CY, AC	    A - B
+            var result = sub8(cpu.reg._8.A, cpu.reg._8.B);
+            updateZeroSignParityFlag(result);
         },
         0xc0 => { //RNZ     	if NZ, RET
             if (!cpu.reg.flags.Z) {
@@ -430,10 +440,9 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.C;
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
         },
-        0xc6 => { //ADI D8  A <- A + byte
-            var result: u16 = @as(u16, cpu.reg._8.A) +% @as(u16, fetch8());
-            updateFlags(result);
-            cpu.reg._8.A = @truncate(u8, result);
+        0xc6 => { //ADI D8      Z, S, P, CY, AC         A <- A + byte
+            cpu.reg._8.A = add8(cpu.reg._8.A, fetch8());
+            updateZeroSignParityFlag(cpu.reg._8.A);
         },
         0xc8 => { //RZ     if Z, RET
             if (cpu.reg.flags.Z) {
@@ -447,6 +456,13 @@ pub fn emulate8080Op(count: u32) !void {
             var address = fetch16();
             if (cpu.reg.flags.Z) {
                 cpu.reg._16.PC = address;
+            }
+        },
+        0xcc => { //CZ adr		if Z, CALL adr
+            if(cpu.reg.flags.Z) {
+                call();
+            } else {
+                _ = fetch16();
             }
         },
         0xcd => { // CALL adr     (SP-1)<-PC.hi;(SP-2)<-PC.lo;SP<-SP-2;PC=adr
@@ -467,6 +483,12 @@ pub fn emulate8080Op(count: u32) !void {
             cpu.reg._8.E = memory[cpu.reg._16.SP];
             cpu.reg._16.SP = cpu.reg._16.SP + 2;
         },
+        0xd2 => { //JNC adr			if NCY, PC<-adr
+            var adr = fetch16();
+            if(!cpu.reg.flags.CY) {
+                cpu.reg._16.PC = adr;
+            }
+        },
         0xd3 => { //OUT D8
             portOut(fetch8(), cpu.reg._8.A);
         },
@@ -475,9 +497,9 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.E;
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
         },
-        0xd6 => { //SUI D8      A <- A - data
-            cpu.reg._8.A -%= fetch8();
-            updateFlagsResetCarry(cpu.reg._8.A);
+        0xd6 => { //SUI D8    	Z, S, P, CY, AC       A <- A - data
+            cpu.reg._8.A = sub8(cpu.reg._8.A, fetch8());
+            updateZeroSignParityFlag(cpu.reg._8.A);
         },
         0xda => { //JC adr      if CY, PC<-adr
             var adr = fetch16();
@@ -499,17 +521,18 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP] = tmpL;
 
             var tmpH = cpu.reg._8.H;
-            cpu.reg._8.H = memory[cpu.reg._16.SP+1];
-            memory[cpu.reg._16.SP+1] = tmpH;
+            cpu.reg._8.H = memory[cpu.reg._16.SP + 1];
+            memory[cpu.reg._16.SP + 1] = tmpH;
         },
         0xe5 => { //PUSH H     	(sp-2)<-L; (sp-1)<-H; sp <- sp - 2
             memory[cpu.reg._16.SP - 1] = cpu.reg._8.H;
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.L;
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
         },
-        0xe6 => { //ANI D8 	A <- A & data
+        0xe6 => { //ANI D8 	 Z, S, P, CY, AC        A <- A & data
             cpu.reg._8.A = cpu.reg._8.A & fetch8();
-            updateFlagsResetCarry(cpu.reg._8.A);
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
         0xe9 => { //PCHL    PC.hi <- H; PC.lo <- L
             cpu.reg._16.PC = toU16(cpu.reg._8.H, cpu.reg._8.L);
@@ -533,37 +556,41 @@ pub fn emulate8080Op(count: u32) !void {
             memory[cpu.reg._16.SP - 2] = cpu.reg._8.F;
             cpu.reg._16.SP = cpu.reg._16.SP - 2;
         },
-        0xf6 => { //ORI D8      A <- A | data
+        0xf6 => { //ORI D8    Z, S, P, CY, AC	      A <- A | data
             cpu.reg._8.A |= fetch8();
-            updateFlagsResetCarry(cpu.reg._8.A);
-            // FIXME AC
+            updateZeroSignParityFlag(cpu.reg._8.A);
+            resetCarryFlag();
         },
         0xfa => { // JM adr     	if M, PC <- adr
             var adr = fetch16();
-            if(cpu.reg.flags.S) {
+            if (cpu.reg.flags.S) {
                 cpu.reg._16.PC = adr;
             }
         },
         0xfb => { //EI  enable interrupts
             cpu.interruptEnabled = true;
         },
-        0xfe => { //CPI D8  A - data
-            var data = fetch8();
-            var result = cpu.reg._8.A -% data;
-            cpu.reg.flags.Z = result == 0; // zero flag: if the result is zero (equal)
-            cpu.reg.flags.CY = cpu.reg._8.A < data;
-            cpu.reg.flags.S = ((result & 0x80) != 0); // // Sign flag: if bit 7 is set
-            cpu.reg.flags.P = parity(result); // Parity
+        0xfe => { //CPI D8  Z, S, P, CY, AC     A - data
+            var result = sub8(cpu.reg._8.A, fetch8());
+
+            // var value: u16 = @as(u16, cpu.reg._8.A) + @as(u16, fetch8());
+            // cpu.reg.flags.CY = value <= 0xff; // Carry flag
+            updateZeroSignParityFlag(result);
         },
 
         else => {
             try exit(opCode);
         },
-    }
 
-    // if(count == 9999999) {
-    //     try exit(opCode);
-    // }
+        
+    }
+    // try stdout.print("\trun={d}\n", .{count});
+        // if(count == 38994000) {
+        // if(count == 21_370_000) {
+        //     try exit(opCode);
+        // }
+
+       
 }
 
 pub fn call() void {
@@ -615,18 +642,52 @@ pub fn portOut(port: u8, value: u8) void {
     }
 }
 
-pub fn updateFlagsResetCarry(result: u8) void {
+pub fn add8(op1: u8, op2: u8) u8 {
+    var value: u16 = @as(u16, op1) + @as(u16, op2);
+    cpu.reg.flags.CY = value > 0xff; // Carry flag
+    return @truncate(u8, value);
+}
+
+pub fn add16(op1: u16, op2: u16) u16 {
+    var value: u32 = @as(u32, op1) + @as(u32, op2);
+    cpu.reg.flags.CY = value > 0xffff; // Carry flag
+    return @truncate(u16, value);
+}
+
+pub fn sub8(op1: u8, op2: u8) u8 {
+    var value: u16 = @as(u16, op1) + @as(u16, ((~op2) + 1));
+
+    // std.debug.print("value {b}", .{value});
+    // std.debug.print("value {d}", .{value});
+
+    cpu.reg.flags.CY = value <= 0xff; // Carry flag (differs from an add operation, which resets the carry if no overflow occurs)
+    return @truncate(u8, value);
+}
+
+test "sub" {
+    cpu.reg.flags.CY = true;
+    var value = sub8(3, 3);
+    try expectEqual(@as(u8, 0), value);
+    try expectEqual(false, cpu.reg.flags.CY);
+
+    value = sub8(3, 4);
+    try expectEqual(@as(u8, 255), value);
+    try expectEqual(true, cpu.reg.flags.CY);
+    
+
+    value = sub8(3, 2);
+    try expectEqual(@as(u8, 1), value);
+    try expectEqual(false, cpu.reg.flags.CY);
+}
+
+pub fn updateZeroSignParityFlag(result: u8) void {
     cpu.reg.flags.Z = result == 0; // zero flag: if the result is zero
-    cpu.reg.flags.S = ((result & 0x80) != 0); // // Sign flag: if bit 7 is set
-    cpu.reg.flags.CY = false;
+    cpu.reg.flags.S = (result & 0x80) != 0; // // Sign flag: if bit 7 is set
     cpu.reg.flags.P = parity(result); // Parity
 }
 
-pub fn updateFlags(result: u16) void {
-    cpu.reg.flags.Z = ((result & 0xff) == 0); // zero flag: if the result is zero
-    cpu.reg.flags.S = ((result & 0x80) != 0); // // Sign flag: if bit 7 is set
-    cpu.reg.flags.CY = (result > 0xff); // Carry flag
-    cpu.reg.flags.P = parity(@truncate(u8, result)); // Parity
+pub fn resetCarryFlag() void {
+    cpu.reg.flags.CY = false;
 }
 
 pub fn parity(v: u8) bool {
@@ -660,6 +721,51 @@ test "parity" {
     value = 0b1111_1111;
     result = parity(value);
     try expectEqual(true, result);
+}
+
+test "RLC" {
+    //RLC     A = A << 1; bit 0 = prev bit 7; CY = prev bit 7
+    cpu.reg._8.A = 0b1000_0001;
+    cpu.reg._16.PC = 0;
+    memory[0] = 0x07;
+
+    try emulate8080Op(0);
+
+    try expectEqual(true, cpu.reg.flags.CY);
+    try expectEqual(@as(u8, 0b0000_0011), cpu.reg._8.A);
+}
+
+test "RAR" {
+    //RAR     A = A >> 1; bit 7 = CY; CY = prev bit 0
+    cpu.reg._8.A = 0b0110_1010;
+    cpu.reg.flags.CY = true;
+    cpu.reg._16.PC = 0;
+    memory[0] = 0x1f;
+
+    try emulate8080Op(0);
+
+    try expectEqual(false, cpu.reg.flags.CY);
+    try expectEqual(@as(u8, 0b1011_0101), cpu.reg._8.A);
+}
+
+test "RRC" {
+    //RRC     CY  	A = A >> 1; bit 7 = prev bit 0; CY = prev bit 0
+    cpu.reg._8.A = 0b1000_0001;
+    cpu.reg._16.PC = 0;
+    memory[0] = 0x0f;
+
+    try emulate8080Op(0);
+
+    try expectEqual(true, cpu.reg.flags.CY);
+    try expectEqual(@as(u8, 0b1100_0000), cpu.reg._8.A);
+
+    cpu.reg._8.A = 0b1000_0000;
+    cpu.reg._16.PC = 0;
+
+    try emulate8080Op(0);
+
+    try expectEqual(false, cpu.reg.flags.CY);
+    try expectEqual(@as(u8, 0b0100_0000), cpu.reg._8.A);
 }
 
 pub fn fetch8() u8 {

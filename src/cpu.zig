@@ -17,6 +17,7 @@ pub const Cpu = struct {
         try stdout.print("HL 0x{x:0>4}\n", .{self.reg._16.HL});
         try stdout.print("PC 0x{x:0>4}\n", .{self.reg._16.PC});
         try stdout.print("SP 0x{x:0>4}\n", .{self.reg._16.SP});
+        try stdout.print("Flags CY={b},P={b},Z={b},S={b}\n", .{self.reg.flags.CY, self.reg.flags.P, self.reg.flags.Z, self.reg.flags.S});
     }
 };
 
