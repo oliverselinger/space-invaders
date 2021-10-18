@@ -7,6 +7,8 @@ const sdl = @cImport({
     @cInclude("SDL2/SDL.h");
 });
 
+const source = @embedFile("../invaders");
+
 var cpu: cp.Cpu = undefined;
 
 var memory: [0x6000]u8 = undefined;
@@ -14,16 +16,11 @@ var memory: [0x6000]u8 = undefined;
 var screen_buf: [224 * 256]u32 = undefined;
 
 pub fn main() !void {
-    const file = try std.fs.cwd().openFile("invaders", .{});
-    defer file.close();
+    // const file = try std.fs.cwd().openFile("invaders", .{});
+    // defer file.close();
+    // const n = try file.readAll(memory[0..]);
 
-    // const memorySize = 0x4000;
-
-    // const allocator = std.heap.page_allocator;
-    // memory = try allocator.alloc(u8, memorySize);
-    // defer allocator.free(memory);
-
-    const n = try file.readAll(memory[0..]);
+    std.mem.copy(u8, memory[0..], source);
 
     //************************************************
     //************* INIT SDL *************************
